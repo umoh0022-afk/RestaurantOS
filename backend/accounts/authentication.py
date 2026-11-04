@@ -2,12 +2,21 @@
 from django.contrib.auth import get_user_model
 from django.middleware.csrf import CsrfViewMiddleware
 
-from rest_framework.authentication import BaseAuthentication, get_authorization_header
-from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.authentication import (
+    BaseAuthentication,
+    get_authorization_header,
+)
+from rest_framework.exceptions import (
+    AuthenticationFailed,
+    PermissionDenied,
+)
 
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
+
+
+User = get_user_model()
 
 
 class CSRFCheck(CsrfViewMiddleware):
@@ -21,8 +30,13 @@ class CookieJWTAuthentication(BaseAuthentication):
         authorization = get_authorization_header(request).split()
 
         if authorization:
-            if len(authorization) != 2 or authorization[0].lower() != b"bearer":
-                raise AuthenticationFailed("Invalid authorization header.")
+            if (
+                len(authorization) != 2
+                or authorization[0].lower() != b"bearer"
+            ):
+                raise AuthenticationFailed(
+                    "Invalid authorization header."
+                )
 
             raw_token = authorization[1]
         else:
@@ -33,26 +47,39 @@ class CookieJWTAuthentication(BaseAuthentication):
 
         try:
             token = AccessToken(raw_token)
-            user_id = token[api_settings.USER_ID_CLAIM]
 
-            User = get_user_model()
+            user_id = token[api_settings.USER_ID_CLAIM]
 
             user = User.objects.get(
                 **{api_settings.USER_ID_FIELD: user_id}
             )
 
-        except (TokenError, KeyError, TypeError, ValueError, User.DoesNotExist):
-            raise AuthenticationFailed("Invalid or expired authentication token.")
+        except (
+            TokenError,
+            KeyError,
+            TypeError,
+            ValueError,
+            User.DoesNotExist,
+        ):
+            raise AuthenticationFailed(
+                "Invalid or expired authentication token."
+            )
 
         if not user.is_active:
-            raise AuthenticationFailed("This account is inactive.")
+            raise AuthenticationFailed(
+                "This account is inactive."
+            )
 
-        # Bearer-token API clients use their own transport security.
-        # Cookie-authenticated browser requests require CSRF validation.
+        # Browser requests authenticated through cookies
+        # require CSRF validation for unsafe methods.
         if not authorization and request.method not in (
-            "GET", "HEAD", "OPTIONS", "TRACE"
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "TRACE",
         ):
             check = CSRFCheck(lambda req: None)
+
             check.process_request(request._request)
 
             reason = check.process_view(
@@ -63,6 +90,8 @@ class CookieJWTAuthentication(BaseAuthentication):
             )
 
             if reason:
-                raise PermissionDenied(f"CSRF verification failed: {reason}")
+                raise PermissionDenied(
+                    f"CSRF verification failed: {reason}"
+                )
 
         return user, token
