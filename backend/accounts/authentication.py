@@ -11,9 +11,9 @@ from rest_framework.exceptions import (
     PermissionDenied,
 )
 
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import AccessToken
-from rest_framework_simplejwt.exceptions import TokenError
 
 
 User = get_user_model()
@@ -29,6 +29,7 @@ class CookieJWTAuthentication(BaseAuthentication):
     def authenticate(self, request):
         authorization = get_authorization_header(request).split()
 
+        # Bearer token authentication
         if authorization:
             if (
                 len(authorization) != 2
@@ -39,11 +40,16 @@ class CookieJWTAuthentication(BaseAuthentication):
                 )
 
             raw_token = authorization[1]
+            cookie_authenticated = False
+
+        # HttpOnly cookie authentication
         else:
             raw_token = request.COOKIES.get("access_token")
 
-        if not raw_token:
-            return None
+            if not raw_token:
+                return None
+
+            cookie_authenticated = True
 
         try:
             token = AccessToken(raw_token)
@@ -70,13 +76,10 @@ class CookieJWTAuthentication(BaseAuthentication):
                 "This account is inactive."
             )
 
-        # Browser requests authenticated through cookies
-        # require CSRF validation for unsafe methods.
-        if not authorization and request.method not in (
-            "GET",
-            "HEAD",
-            "OPTIONS",
-            "TRACE",
+        # Require CSRF validation for unsafe cookie-authenticated requests.
+        if (
+            cookie_authenticated
+            and request.method not in ("GET", "HEAD", "OPTIONS", "TRACE")
         ):
             check = CSRFCheck(lambda req: None)
 
@@ -84,7 +87,7 @@ class CookieJWTAuthentication(BaseAuthentication):
 
             reason = check.process_view(
                 request._request,
-                lambda req: None,
+                None,
                 (),
                 {},
             )
