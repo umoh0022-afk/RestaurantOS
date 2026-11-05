@@ -15,6 +15,9 @@ const API_URL =
 
 const BACKEND_URL = API_URL.replace(/\/api\/?$/, "");
 
+// Share a single refresh request when several API requests fail together.
+let refreshPromise: Promise<boolean> | null = null;
+
 interface Restaurant {
   id: number;
   name: string;
@@ -53,12 +56,15 @@ interface Branch {
 
 async function getCsrfToken(): Promise<string> {
   const response = await fetch(`${API_URL}/auth/csrf/`, {
+    method: "GET",
     credentials: "include",
     cache: "no-store",
   });
 
   if (!response.ok) {
-    throw new Error("Unable to initialise security verification.");
+    throw new Error(
+      "Unable to initialise security verification."
+    );
   }
 
   const cookie = document.cookie
@@ -66,57 +72,128 @@ async function getCsrfToken(): Promise<string> {
     .find((item) => item.startsWith("csrftoken="));
 
   if (!cookie) {
-    throw new Error("Security cookie not found. Please refresh and retry.");
+    throw new Error(
+      "Security cookie not found. Please refresh and retry."
+    );
   }
 
   return decodeURIComponent(cookie.split("=")[1]);
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const csrfToken = await getCsrfToken();
+
+      const response = await fetch(`${API_URL}/auth/refresh/`, {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken,
+        },
+      });
+
+      return response.ok;
+    } catch (error) {
+      console.error("Access token refresh failed:", error);
+      return false;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+function getErrorMessage(data: Record<string, unknown>): string {
+  if (typeof data.detail === "string") {
+    return data.detail;
+  }
+
+  return (
+    Object.entries(data)
+      .map(([field, value]) => {
+        const message = Array.isArray(value)
+          ? value.join(", ")
+          : String(value);
+
+        return `${field}: ${message}`;
+      })
+      .join(" | ") ||
+    "The request could not be completed."
+  );
 }
 
 async function apiRequest(
   url: string,
   method = "GET",
   body?: BodyInit,
-  json = true
+  json = true,
+  retry = true
 ) {
-  const headers = new Headers();
+  const sendRequest = async (): Promise<Response> => {
+    const headers = new Headers();
 
-  if (json && body) {
-    headers.set("Content-Type", "application/json");
+    if (json && body) {
+      headers.set("Content-Type", "application/json");
+    }
+
+    if (method !== "GET" && method !== "HEAD") {
+      headers.set("X-CSRFToken", await getCsrfToken());
+    }
+
+    return fetch(url, {
+      method,
+      headers,
+      body,
+      credentials: "include",
+      cache: "no-store",
+    });
+  };
+
+  let response = await sendRequest();
+
+  if (
+    retry &&
+    (response.status === 401 || response.status === 403)
+  ) {
+    const errorData = await response
+      .clone()
+      .json()
+      .catch(() => ({}));
+
+    const authenticationFailure =
+      response.status === 401 ||
+      errorData.detail ===
+        "Authentication credentials were not provided." ||
+      errorData.detail ===
+        "Invalid or expired authentication token.";
+
+    if (authenticationFailure) {
+      const refreshed = await refreshAccessToken();
+
+      if (!refreshed) {
+        throw new Error(
+          "Your session has expired. Please log in again."
+        );
+      }
+
+      response = await sendRequest();
+    }
   }
-
-  if (method !== "GET") {
-    headers.set("X-CSRFToken", await getCsrfToken());
-  }
-
-  const response = await fetch(url, {
-    method,
-    headers,
-    body,
-    credentials: "include",
-    cache: "no-store",
-  });
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    if (response.status === 401) {
-      throw new Error("Your session has expired. Please log in again.");
-    }
-
-    const message =
-      data.detail ||
-      Object.entries(data)
-        .map(([field, value]) => {
-          const text = Array.isArray(value)
-            ? value.join(", ")
-            : String(value);
-
-          return `${field}: ${text}`;
-        })
-        .join(" | ") ||
-      "The request could not be completed.";
-
-    throw new Error(message);
+    throw new Error(
+      getErrorMessage(data as Record<string, unknown>)
+    );
   }
 
   return data;
@@ -135,13 +212,17 @@ function getImageUrl(image: string | null): string | null {
 export default function MenuPage() {
   const router = useRouter();
 
-  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
+  const [restaurant, setRestaurant] =
+    useState<Restaurant | null>(null);
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
 
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [activeTab, setActiveTab] = useState<"items" | "categories">("items");
+
+  const [activeTab, setActiveTab] =
+    useState<"items" | "categories">("items");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -151,7 +232,8 @@ export default function MenuPage() {
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [showItemForm, setShowItemForm] = useState(false);
 
-  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [editingItem, setEditingItem] =
+    useState<MenuItem | null>(null);
 
   const [categoryForm, setCategoryForm] = useState({
     name: "",
@@ -171,7 +253,6 @@ export default function MenuPage() {
   };
 
   const [itemForm, setItemForm] = useState(initialItemForm);
-
   const [imageFile, setImageFile] = useState<File | null>(null);
 
   async function loadMenu() {
@@ -193,18 +274,21 @@ export default function MenuPage() {
 
       const base = `${API_URL}/restaurants/${currentRestaurant.id}`;
 
-      const [categoryData, itemData, branchData] = await Promise.all([
-        apiRequest(`${base}/menu/categories/`),
-        apiRequest(`${base}/menu/items/`),
-        apiRequest(`${base}/branches/`),
-      ]);
+      const [categoryData, itemData, branchData] =
+        await Promise.all([
+          apiRequest(`${base}/menu/categories/`),
+          apiRequest(`${base}/menu/items/`),
+          apiRequest(`${base}/branches/`),
+        ]);
 
       setCategories(categoryData);
       setItems(itemData);
       setBranches(branchData);
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Unable to load your menu.";
+        err instanceof Error
+          ? err.message
+          : "Unable to load your menu.";
 
       if (message.toLowerCase().includes("session has expired")) {
         router.replace("/login");
@@ -263,7 +347,9 @@ export default function MenuPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function createCategory(event: FormEvent<HTMLFormElement>) {
+  async function createCategory(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     if (!restaurant) return;
@@ -291,14 +377,18 @@ export default function MenuPage() {
       await loadMenu();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Unable to create category."
+        err instanceof Error
+          ? err.message
+          : "Unable to create category."
       );
     } finally {
       setSaving(false);
     }
   }
 
-  async function saveMenuItem(event: FormEvent<HTMLFormElement>) {
+  async function saveMenuItem(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     if (!restaurant) return;
@@ -314,11 +404,14 @@ export default function MenuPage() {
       formData.append("description", itemForm.description);
       formData.append("price", itemForm.price);
       formData.append("category", itemForm.category);
+
       formData.append(
         "preparation_time",
         itemForm.preparation_time
       );
+
       formData.append("display_order", itemForm.display_order);
+
       formData.append(
         "is_available",
         String(itemForm.is_available)
@@ -356,7 +449,9 @@ export default function MenuPage() {
       await loadMenu();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Unable to save menu item."
+        err instanceof Error
+          ? err.message
+          : "Unable to save menu item."
       );
     } finally {
       setSaving(false);
@@ -382,7 +477,9 @@ export default function MenuPage() {
       await loadMenu();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Unable to update item."
+        err instanceof Error
+          ? err.message
+          : "Unable to update item."
       );
     }
   }
@@ -390,7 +487,11 @@ export default function MenuPage() {
   async function deleteItem(item: MenuItem) {
     if (!restaurant) return;
 
-    if (!window.confirm(`Delete "${item.name}" from your menu?`)) return;
+    if (
+      !window.confirm(`Delete "${item.name}" from your menu?`)
+    ) {
+      return;
+    }
 
     setError("");
     setSuccess("");
@@ -405,7 +506,9 @@ export default function MenuPage() {
       await loadMenu();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Unable to delete item."
+        err instanceof Error
+          ? err.message
+          : "Unable to delete item."
       );
     }
   }
@@ -435,7 +538,9 @@ export default function MenuPage() {
       await loadMenu();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Unable to delete category."
+        err instanceof Error
+          ? err.message
+          : "Unable to delete category."
       );
     }
   }
@@ -653,13 +758,16 @@ export default function MenuPage() {
             onSubmit={createCategory}
             className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
           >
-            <h3 className="text-lg font-bold">Create menu category</h3>
+            <h3 className="text-lg font-bold">
+              Create menu category
+            </h3>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium">
                   Category name *
                 </label>
+
                 <input
                   required
                   maxLength={100}
@@ -679,6 +787,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Display order
                 </label>
+
                 <input
                   type="number"
                   min="0"
@@ -697,6 +806,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Description
                 </label>
+
                 <textarea
                   rows={2}
                   value={categoryForm.description}
@@ -751,6 +861,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Item name *
                 </label>
+
                 <input
                   required
                   maxLength={200}
@@ -770,6 +881,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Category *
                 </label>
+
                 <select
                   required
                   value={itemForm.category}
@@ -782,6 +894,7 @@ export default function MenuPage() {
                   className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
                 >
                   <option value="">Select a category</option>
+
                   {categories
                     .filter((category) => category.is_active)
                     .map((category) => (
@@ -799,6 +912,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Price ({restaurant?.currency || "NGN"}) *
                 </label>
+
                 <input
                   required
                   type="number"
@@ -820,6 +934,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Description
                 </label>
+
                 <textarea
                   rows={3}
                   value={itemForm.description}
@@ -838,6 +953,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Preparation time (minutes)
                 </label>
+
                 <input
                   type="number"
                   min="0"
@@ -856,6 +972,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Display order
                 </label>
+
                 <input
                   type="number"
                   min="0"
@@ -880,6 +997,7 @@ export default function MenuPage() {
                     <p className="mb-2 text-xs text-gray-500">
                       Current image
                     </p>
+
                     <img
                       src={getImageUrl(editingItem.image) || ""}
                       alt={editingItem.name}
@@ -907,6 +1025,7 @@ export default function MenuPage() {
                     <p className="mb-2 text-xs font-semibold text-emerald-700">
                       New image selected: {imageFile.name}
                     </p>
+
                     <img
                       src={URL.createObjectURL(imageFile)}
                       alt="New menu item preview"
@@ -920,6 +1039,7 @@ export default function MenuPage() {
                 <label className="mb-2 block text-sm font-medium">
                   Branch availability
                 </label>
+
                 <select
                   multiple
                   value={itemForm.branches.map(String)}
@@ -932,6 +1052,7 @@ export default function MenuPage() {
                     </option>
                   ))}
                 </select>
+
                 <p className="mt-2 text-xs text-gray-400">
                   Select the branches where this item is available.
                 </p>
@@ -988,6 +1109,7 @@ export default function MenuPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="font-bold">{category.name}</h3>
+
                     <p className="mt-2 text-sm text-gray-500">
                       {category.description || "No description"}
                     </p>
@@ -1016,6 +1138,7 @@ export default function MenuPage() {
             {categories.length === 0 && (
               <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center sm:col-span-2 lg:col-span-3">
                 <h3 className="font-bold">No categories yet</h3>
+
                 <p className="mt-2 text-sm text-gray-500">
                   Create your first category to organise your menu.
                 </p>
@@ -1079,7 +1202,9 @@ export default function MenuPage() {
                           : "bg-gray-200 text-gray-600"
                       }`}
                     >
-                      {item.is_available ? "Available" : "Unavailable"}
+                      {item.is_available
+                        ? "Available"
+                        : "Unavailable"}
                     </span>
                   </div>
 
@@ -1089,6 +1214,7 @@ export default function MenuPage() {
                         <p className="text-xs font-semibold text-emerald-700">
                           {item.category_name}
                         </p>
+
                         <h3 className="mt-1 text-lg font-bold">
                           {item.name}
                         </h3>
@@ -1104,7 +1230,10 @@ export default function MenuPage() {
                     </p>
 
                     <div className="mt-4 flex flex-wrap gap-3 text-xs text-gray-400">
-                      <span>{item.preparation_time} min preparation</span>
+                      <span>
+                        {item.preparation_time} min preparation
+                      </span>
+
                       <span>
                         {item.branch_names.join(", ") || "All branches"}
                       </span>
@@ -1141,9 +1270,11 @@ export default function MenuPage() {
               {filteredItems.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center sm:col-span-2 xl:col-span-3">
                   <h3 className="font-bold">No menu items found</h3>
+
                   <p className="mt-2 text-sm text-gray-500">
                     Create a category and add your first food or drink.
                   </p>
+
                   <button
                     onClick={() => {
                       if (categories.length === 0) {
