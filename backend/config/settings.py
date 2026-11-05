@@ -42,6 +42,22 @@ ALLOWED_HOSTS = env_list(
 
 
 # ==========================================================
+# CLOUDINARY CONFIGURATION
+# ==========================================================
+
+CLOUDINARY_URL = os.getenv("CLOUDINARY_URL", "").strip()
+
+CLOUDINARY_ENABLED = bool(CLOUDINARY_URL)
+
+CLOUDINARY_STORAGE = {
+    "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),
+    "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
+    "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
+    "SECURE": True,
+}
+
+
+# ==========================================================
 # INSTALLED APPLICATIONS
 # ==========================================================
 
@@ -55,6 +71,9 @@ INSTALLED_APPS = [
 
     "rest_framework",
     "rest_framework_simplejwt",
+
+    "cloudinary_storage",
+    "cloudinary",
 
     "accounts",
     "restaurants",
@@ -193,16 +212,24 @@ MEDIA_URL = "/media/"
 
 MEDIA_ROOT = BASE_DIR / "media"
 
-STORAGES = {
-    "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-    },
-    "staticfiles": {
-        "BACKEND": (
-            "whitenoise.storage.CompressedStaticFilesStorage"
-        ),
-    },
-}
+if CLOUDINARY_ENABLED:
+    STORAGES = {
+        "default": {
+            "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        },
+    }
+else:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        },
+    }
 
 
 # ==========================================================
@@ -233,17 +260,15 @@ CORS_ALLOW_CREDENTIALS = True
 # CSRF CONFIGURATION
 # ==========================================================
 
-# ==========================================================
-# CSRF CONFIGURATION
-# ==========================================================
-
 CSRF_TRUSTED_ORIGINS = env_list(
     "CSRF_TRUSTED_ORIGINS",
     FRONTEND_URL,
 )
 
 CSRF_COOKIE_HTTPONLY = False
+
 CSRF_COOKIE_SECURE = not DEBUG
+
 CSRF_COOKIE_SAMESITE = "None"
 
 CSRF_HEADER_NAME = "HTTP_X_CSRFTOKEN"
@@ -254,7 +279,9 @@ CSRF_HEADER_NAME = "HTTP_X_CSRFTOKEN"
 # ==========================================================
 
 SESSION_COOKIE_HTTPONLY = True
+
 SESSION_COOKIE_SECURE = not DEBUG
+
 SESSION_COOKIE_SAMESITE = "None"
 
 

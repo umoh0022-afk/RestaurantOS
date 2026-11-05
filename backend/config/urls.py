@@ -1,3 +1,4 @@
+
 from django.contrib import admin
 from django.urls import include, path
 from django.http import JsonResponse
@@ -35,7 +36,10 @@ urlpatterns = [
 ]
 
 
-if settings.DEBUG:
+# Serve local uploaded files during development only.
+# Production media files are served by Cloudinary.
+
+if settings.DEBUG and not settings.CLOUDINARY_ENABLED:
     urlpatterns += static(
         settings.MEDIA_URL,
         document_root=settings.MEDIA_ROOT,
