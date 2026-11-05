@@ -10,3 +10,4 @@ gunicorn
 whitenoise
 cloudinary==1.47.0
 django-cloudinary-storage==0.3.0
+Pillow
