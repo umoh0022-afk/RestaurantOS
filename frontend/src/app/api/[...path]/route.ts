@@ -9,7 +9,6 @@ const API_TARGET =
 async function proxyRequest(request: NextRequest) {
   const incomingUrl = new URL(request.url);
 
-  // Preserve the original path, including trailing slashes.
   const targetUrl = new URL(
     `${incomingUrl.pathname}${incomingUrl.search}`,
     API_TARGET
@@ -17,7 +16,6 @@ async function proxyRequest(request: NextRequest) {
 
   const headers = new Headers(request.headers);
 
-  // Let the backend determine its own host.
   headers.delete("host");
   headers.delete("connection");
   headers.delete("content-length");
@@ -41,10 +39,12 @@ async function proxyRequest(request: NextRequest) {
 
     const responseHeaders = new Headers(upstream.headers);
 
-    responseHeaders.delete("connection");
+    // Remove headers that may no longer match the forwarded body.
+    responseHeaders.delete("content-length");
+    responseHeaders.delete("content-encoding");
     responseHeaders.delete("transfer-encoding");
+    responseHeaders.delete("connection");
 
-    // Keep redirects on the frontend origin when possible.
     const location = responseHeaders.get("location");
 
     if (location) {
@@ -66,7 +66,9 @@ async function proxyRequest(request: NextRequest) {
     console.error("RestaurantOS API proxy error:", error);
 
     return NextResponse.json(
-      { detail: "Unable to connect to the RestaurantOS API." },
+      {
+        detail: "Unable to connect to the RestaurantOS API.",
+      },
       { status: 502 }
     );
   }
