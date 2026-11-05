@@ -33,6 +33,7 @@ const initialForm: RestaurantForm = {
   currency: "NGN",
 };
 
+
 async function getCsrfToken(): Promise<string> {
   const response = await fetch(`${API_URL}/auth/csrf/`, {
     method: "GET",
@@ -44,18 +45,15 @@ async function getCsrfToken(): Promise<string> {
     throw new Error("Unable to initialise security verification.");
   }
 
-  const cookie = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith("csrftoken="));
+  const data = await response.json();
 
-  if (!cookie) {
-    throw new Error(
-      "Security cookie not found. Please refresh the page and try again."
-    );
+  if (!data.csrfToken) {
+    throw new Error("Security verification token was not returned.");
   }
 
-  return decodeURIComponent(cookie.split("=")[1]);
+  return data.csrfToken;
 }
+
 
 export default function RestaurantOnboardingPage() {
   const router = useRouter();
