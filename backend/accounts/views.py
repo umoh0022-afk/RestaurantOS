@@ -18,7 +18,7 @@ from .serializers import RegisterSerializer, UserSerializer
 User = get_user_model()
 
 COOKIE_SECURE = not settings.DEBUG
-COOKIE_SAMESITE = "Lax"
+COOKIE_SAMESITE = "None" if COOKIE_SECURE else "Lax"
 
 
 class CSRFCheck(CsrfViewMiddleware):
@@ -57,7 +57,9 @@ def set_auth_cookies(response, user):
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
         path="/",
-        max_age=int(api_settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
+        max_age=int(
+            api_settings.ACCESS_TOKEN_LIFETIME.total_seconds()
+        ),
     )
 
     response.set_cookie(
@@ -67,7 +69,9 @@ def set_auth_cookies(response, user):
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
         path="/api/auth/",
-        max_age=int(api_settings.REFRESH_TOKEN_LIFETIME.total_seconds()),
+        max_age=int(
+            api_settings.REFRESH_TOKEN_LIFETIME.total_seconds()
+        ),
     )
 
 

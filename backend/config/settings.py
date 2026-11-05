@@ -233,16 +233,20 @@ CORS_ALLOW_CREDENTIALS = True
 # CSRF CONFIGURATION
 # ==========================================================
 
+# ==========================================================
+# CSRF CONFIGURATION
+# ==========================================================
+
 CSRF_TRUSTED_ORIGINS = env_list(
     "CSRF_TRUSTED_ORIGINS",
     FRONTEND_URL,
 )
 
 CSRF_COOKIE_HTTPONLY = False
-
 CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = "None"
 
-CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_HEADER_NAME = "HTTP_X_CSRFTOKEN"
 
 
 # ==========================================================
@@ -250,10 +254,8 @@ CSRF_COOKIE_SAMESITE = "Lax"
 # ==========================================================
 
 SESSION_COOKIE_HTTPONLY = True
-
 SESSION_COOKIE_SECURE = not DEBUG
-
-SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SAMESITE = "None"
 
 
 # ==========================================================

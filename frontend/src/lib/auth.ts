@@ -10,23 +10,23 @@ export interface User {
 }
 
 async function getCsrfToken(): Promise<string> {
-  await fetch(`${API_URL}/auth/csrf/`, {
+  const response = await fetch(`${API_URL}/auth/csrf/`, {
     method: "GET",
     credentials: "include",
     cache: "no-store",
   });
 
-  const cookie = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith("csrftoken="));
-
-  if (!cookie) {
-    throw new Error(
-      "Unable to initialise security verification. Please retry."
-    );
+  if (!response.ok) {
+    throw new Error("Unable to initialise security verification.");
   }
 
-  return decodeURIComponent(cookie.split("=")[1]);
+  const data = await response.json();
+
+  if (!data.csrfToken) {
+    throw new Error("Security verification token was not returned.");
+  }
+
+  return data.csrfToken;
 }
 
 async function refreshAccessToken(): Promise<boolean> {
@@ -94,10 +94,7 @@ async function request<T>(
     !endpoint.startsWith("/auth/register/") &&
     !endpoint.startsWith("/auth/refresh/") &&
     !endpoint.startsWith("/auth/logout/") &&
-    (
-      response.status === 401 ||
-      response.status === 403
-    )
+    (response.status === 401 || response.status === 403)
   ) {
     const errorData = await response.clone()
       .json()
