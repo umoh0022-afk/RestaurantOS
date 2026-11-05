@@ -2,8 +2,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Prevent Next.js from removing trailing slashes
-  // from Django API requests.
   skipTrailingSlashRedirect: true,
 
   turbopack: {
@@ -13,15 +11,6 @@ const nextConfig: NextConfig = {
         as: "*.css",
       },
     },
-  },
-
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${process.env.API_PROXY_TARGET || "http://localhost:8000"}/api/:path*`,
-      },
-    ];
   },
 };
 
