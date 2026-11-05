@@ -2,6 +2,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Prevent Next.js from removing trailing slashes
+  // from Django API requests.
+  skipTrailingSlashRedirect: true,
+
   turbopack: {
     rules: {
       "*.css": {
